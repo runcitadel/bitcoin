@@ -1043,6 +1043,29 @@ static CBlockUndo GetUndoChecked(const CBlockIndex* pblockindex)
     return blockUndo;
 }
 
+/// Requires cs_main
+static void ThrowIfPrunedBlock(const CBlockIndex *pblockindex) EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
+    AssertLockHeld(::cs_main);
+    if (IsBlockPruned(pblockindex)) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Block not available (pruned data)");
+    }
+}
+
+/// Lock-free -- will throw if block not found or was pruned, etc. Guaranteed to return a valid block or fail.
+static CBlock ReadBlockChecked(const CBlockIndex *pblockindex) {
+    CBlock block;
+    if (!ReadBlockFromDisk(block, pblockindex,
+                           Params().GetConsensus())) {
+        // Block not found on disk. This could be because we have the block
+        // header in our index but don't have the block (for example if a
+        // non-whitelisted node sends us an unrequested long chain of valid
+        // blocks, we add the headers to our index, but don't accept the block).
+        throw JSONRPCError(RPC_MISC_ERROR, "Block not found on disk");
+    }
+
+    return block;
+}
+
 static RPCHelpMan getblock()
 {
     return RPCHelpMan{"getblock",
@@ -1157,18 +1180,17 @@ static RPCHelpMan getblock()
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Block not found");
         }
 
-        if (IsBlockPruned(pblockindex)) {
-            throw JSONRPCError(RPC_MISC_ERROR, "Block not available (pruned data)");
-        }
+        ThrowIfPrunedBlock(pblockindex);
+    }
 
-        if (verbosity <= 0 && !RPCSerializationFlags()) {
-            // This one case doesn't need to parse the block at all
-            if (!ReadRawBlockFromDisk(raw_block, pblockindex, Params().MessageStart())) {
-                throw JSONRPCError(RPC_MISC_ERROR, "Block not found on disk");
-            }
-        } else {
-            block = GetBlockChecked(pblockindex);
+
+    if (verbosity <= 0 && !RPCSerializationFlags()) {
+        // This one case doesn't need to parse the block at all
+        if (!ReadRawBlockFromDisk(raw_block, pblockindex, Params().MessageStart())) {
+            throw JSONRPCError(RPC_MISC_ERROR, "Block not found on disk");
         }
+    } else {
+        block = ReadBlockChecked(pblockindex);
     }
 
     if (verbosity <= 0)
