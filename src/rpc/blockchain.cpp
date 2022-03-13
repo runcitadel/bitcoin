@@ -1052,10 +1052,10 @@ static void ThrowIfPrunedBlock(const CBlockIndex *pblockindex) EXCLUSIVE_LOCKS_R
 }
 
 /// Lock-free -- will throw if block not found or was pruned, etc. Guaranteed to return a valid block or fail.
-static CBlock ReadBlockChecked(const Config &config, const CBlockIndex *pblockindex) {
+static CBlock ReadBlockChecked(const CBlockIndex *pblockindex) {
     CBlock block;
     if (!ReadBlockFromDisk(block, pblockindex,
-                           config.GetChainParams().GetConsensus())) {
+                           Params().GetConsensus())) {
         // Block not found on disk. This could be because we have the block
         // header in our index but don't have the block (for example if a
         // non-whitelisted node sends us an unrequested long chain of valid
