@@ -1220,6 +1220,162 @@ static RPCHelpMan getblock()
     };
 }
 
+static RPCHelpMan getblockbyindex()
+{
+    return RPCHelpMan{"getblockbyindex",
+                "\nIf verbosity is 0, returns a string that is serialized, hex-encoded data for block at 'height'.\n"
+                "If verbosity is 1, returns an Object with information about block <height>.\n"
+                "If verbosity is 2, returns an Object with information about block <height> and information about each transaction.\n"
+                "If verbosity is 3, returns an Object with information about block <height> and information about each transaction, including prevout information for inputs (only for unpruned blocks in the current best chain).\n",
+                {
+                    {"height", RPCArg::Type::NUM, RPCArg::Optional::NO, "The height index"},
+                    {"verbosity|verbose", RPCArg::Type::NUM, RPCArg::Default{1}, "0 for hex-encoded data, 1 for a json object, and 2 for json object with transaction data"},
+                },
+                {
+                    RPCResult{"for verbosity = 0",
+                RPCResult::Type::STR_HEX, "", "A string that is serialized, hex-encoded data for block 'hash'"},
+                    RPCResult{"for verbosity = 1",
+                RPCResult::Type::OBJ, "", "",
+                {
+                    {RPCResult::Type::STR_HEX, "hash", "the block hash"},
+                    {RPCResult::Type::NUM, "confirmations", "The number of confirmations, or -1 if the block is not on the main chain"},
+                    {RPCResult::Type::NUM, "size", "The block size"},
+                    {RPCResult::Type::NUM, "strippedsize", "The block size excluding witness data"},
+                    {RPCResult::Type::NUM, "weight", "The block weight as defined in BIP 141"},
+                    {RPCResult::Type::NUM, "height", "The block height or index (same as provided)"},
+                    {RPCResult::Type::NUM, "version", "The block version"},
+                    {RPCResult::Type::STR_HEX, "versionHex", "The block version formatted in hexadecimal"},
+                    {RPCResult::Type::STR_HEX, "merkleroot", "The merkle root"},
+                    {RPCResult::Type::ARR, "tx", "The transaction ids",
+                        {{RPCResult::Type::STR_HEX, "", "The transaction id"}}},
+                    {RPCResult::Type::NUM_TIME, "time",       "The block time expressed in " + UNIX_EPOCH_TIME},
+                    {RPCResult::Type::NUM_TIME, "mediantime", "The median block time expressed in " + UNIX_EPOCH_TIME},
+                    {RPCResult::Type::NUM, "nonce", "The nonce"},
+                    {RPCResult::Type::STR_HEX, "bits", "The bits"},
+                    {RPCResult::Type::NUM, "difficulty", "The difficulty"},
+                    {RPCResult::Type::STR_HEX, "chainwork", "Expected number of hashes required to produce the chain up to this block (in hex)"},
+                    {RPCResult::Type::NUM, "nTx", "The number of transactions in the block"},
+                    {RPCResult::Type::STR_HEX, "previousblockhash", /* optional */ true, "The hash of the previous block (if available)"},
+                    {RPCResult::Type::STR_HEX, "nextblockhash", /* optional */ true, "The hash of the next block (if available)"},
+                }},
+                    RPCResult{"for verbosity = 2",
+                RPCResult::Type::OBJ, "", "",
+                {
+                    {RPCResult::Type::ELISION, "", "Same output as verbosity = 1"},
+                    {RPCResult::Type::ARR, "tx", "",
+                    {
+                        {RPCResult::Type::OBJ, "", "",
+                        {
+                            {RPCResult::Type::ELISION, "", "The transactions in the format of the getrawtransaction RPC. Different from verbosity = 1 \"tx\" result"},
+                            {RPCResult::Type::NUM, "fee", "The transaction fee in " + CURRENCY_UNIT + ", omitted if block undo data is not available"},
+                        }},
+                    }},
+                }},
+                    RPCResult{"for verbosity = 3",
+                RPCResult::Type::OBJ, "", "",
+                {
+                    {RPCResult::Type::ELISION, "", "Same output as verbosity = 2"},
+                    {RPCResult::Type::ARR, "tx", "",
+                    {
+                        {RPCResult::Type::OBJ, "", "",
+                        {
+                            {RPCResult::Type::ARR, "vin", "",
+                            {
+                                {RPCResult::Type::OBJ, "", "",
+                                {
+                                    {RPCResult::Type::ELISION, "", "The same output as verbosity = 2"},
+                                    {RPCResult::Type::OBJ, "prevout", "",
+                                    {
+                                        {RPCResult::Type::BOOL, "generated", "Coinbase or not"},
+                                        {RPCResult::Type::NUM, "height", "The height of the prevout"},
+                                        {RPCResult::Type::NUM, "value", "The value in " + CURRENCY_UNIT},
+                                        {RPCResult::Type::OBJ, "scriptPubKey", "",
+                                        {
+                                            {RPCResult::Type::STR, "asm", "The asm"},
+                                            {RPCResult::Type::STR, "hex", "The hex"},
+                                            {RPCResult::Type::STR, "address", /* optional */ true, "The Bitcoin address (only if a well-defined address exists)"},
+                                            {RPCResult::Type::STR, "type", "The type, eg 'pubkeyhash'"},
+                                        }},
+                                    }},
+                                }},
+                            }},
+                        }},
+                    }},
+                }},
+        },
+                RPCExamples{
+                    HelpExampleCli("getblockbyindex", "727461")
+            + HelpExampleRpc("getblockbyindex", "727461")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    int nHeight = request.params[0].get_int();
+
+    int verbosity = 1;
+    if (!request.params[1].isNull()) {
+        if (request.params[1].isBool()) {
+            verbosity = request.params[1].get_bool() ? 1 : 0;
+        } else {
+            verbosity = request.params[1].get_int();
+        }
+    }
+
+    CBlock block;
+    std::vector<uint8_t> raw_block;
+    const CBlockIndex* pblockindex;
+    const CBlockIndex* tip;
+    {
+        ChainstateManager& chainman = EnsureAnyChainman(request.context);
+        LOCK(cs_main);
+        const CChain& active_chain = chainman.ActiveChain();
+        if (nHeight < 0 || nHeight > active_chain.Height())
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Block height out of range");
+        tip = active_chain.Tip();
+        pblockindex = active_chain[nHeight];
+
+        if (!pblockindex) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Block not found");
+        }
+
+        ThrowIfPrunedBlock(pblockindex);
+    }
+
+    if (verbosity <= 0 && !RPCSerializationFlags()) {
+        // This one case doesn't need to parse the block at all
+        if (!ReadRawBlockFromDisk(raw_block, pblockindex, Params().MessageStart())) {
+            throw JSONRPCError(RPC_MISC_ERROR, "Block not found on disk");
+        }
+    } else {
+        block = ReadBlockChecked(pblockindex);
+    }
+
+    if (verbosity <= 0)
+    {
+        std::string strHex;
+        if (raw_block.empty()) {
+            CDataStream ssBlock(SER_NETWORK, PROTOCOL_VERSION | RPCSerializationFlags());
+            ssBlock << block;
+            strHex = HexStr(ssBlock);
+        } else {
+            strHex = HexStr(raw_block);
+        }
+        return strHex;
+    }
+
+    TxVerbosity tx_verbosity;
+    if (verbosity == 1) {
+        tx_verbosity = TxVerbosity::SHOW_TXID;
+    } else if (verbosity == 2) {
+        tx_verbosity = TxVerbosity::SHOW_DETAILS;
+    } else {
+        tx_verbosity = TxVerbosity::SHOW_DETAILS_AND_PREVOUT;
+    }
+
+    return blockToJSON(block, tip, pblockindex, tx_verbosity);
+},
+    };
+}
+
 static RPCHelpMan listprunelocks()
 {
     return RPCHelpMan{"listprunelocks",
@@ -3513,6 +3669,7 @@ static const CRPCCommand commands[] =
     { "blockchain",         &getbestblockhash,                   },
     { "blockchain",         &getblockcount,                      },
     { "blockchain",         &getblock,                           },
+    { "blockchain",         &getblockbyindex,                    },
     { "blockchain",         &getblockfrompeer,                   },
     { "blockchain",         &getblockhash,                       },
     { "blockchain",         &getblockheader,                     },
